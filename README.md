@@ -30,8 +30,10 @@ pip install -r requirements.txt
 # Generate SSH key if you don't have one
 ssh-keygen -t rsa -b 4096 -f ~/.ssh/ise
 
-# Copy public key to ISE server
-ssh-copy-id -i ~/.ssh/ise.pub admin@<ise-host>
+# Copy public key to ISE repository, then execute on ISE:
+crypto key import ise.pub repository NFS
+conf t
+service sshd PubkeyAuthentication
 ```
 
 4. Update configuration in `ise-export.py`:
