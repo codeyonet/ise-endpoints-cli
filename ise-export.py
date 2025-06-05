@@ -7,6 +7,8 @@ The script will:
 2. Generate endpoint report
 3. Copy report to NFS repository
 4. (Optional) Upload to S3 bucket
+
+Note: This script is designed to run as a cron job.
 """
 
 __author__ = "Andre Klyuchka"
@@ -20,10 +22,17 @@ import sys
 import logging
 from datetime import datetime
 import time
+import boto3
+from botocore.exceptions import ClientError
+from pathlib import Path
 
-# Configure logging
+# Get the directory where the script is located
+SCRIPT_DIR = Path(__file__).parent.absolute()
+
+# Configure logging with absolute paths
+log_file = SCRIPT_DIR / 'ise_export.log'
 logging.basicConfig(
-    filename='ise_export.log',
+    filename=str(log_file),
     level=logging.INFO,
     format='%(asctime)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
@@ -34,14 +43,57 @@ console = logging.StreamHandler()
 console.setLevel(logging.INFO)
 logging.getLogger('').addHandler(console)
 
-# Variables
-ISE_HOST = "1.2.3.4"
-ISE_USER = "iseadmin"
-ISE_KEY = os.path.expanduser("~/.ssh/ise")
-NFS_PATH = "/home/nfsshare"
-PRESIGNED_URL = f"https://your-s3-bucket.s3.amazonaws.com/FullReport_{datetime.now().strftime('%d-%b-%Y')}.csv?AWSAccessKeyId=..."  # Replace with your pre-signed URL
+# Variables - using environment variables with fallbacks
+ISE_HOST = os.getenv('ISE_HOST', '1.2.3.4')
+ISE_USER = os.getenv('ISE_USER', 'iseadmin')
+ISE_KEY = os.path.expanduser(os.getenv('ISE_KEY', '~/.ssh/ise'))
+NFS_PATH = os.getenv('NFS_PATH', '/home/nfsshare')
 TODAY = datetime.now().strftime("%d-%b-%Y")
 CSV_FILE = f"FullReport_{TODAY}.csv"
+
+# AWS Configuration - using environment variables with fallbacks
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
+S3_BUCKET = os.getenv('S3_BUCKET', 'your-bucket-name')
+S3_PREFIX = os.getenv('S3_PREFIX', 'ise-reports/')
+
+def check_aws_credentials():
+    """Check if AWS credentials are properly configured"""
+    try:
+        session = boto3.Session()
+        credentials = session.get_credentials()
+        if credentials is None:
+            logging.error("AWS credentials not found. Please configure AWS credentials.")
+            return False
+        return True
+    except Exception as e:
+        logging.error(f"Error checking AWS credentials: {str(e)}")
+        return False
+
+def upload_to_s3(file_path, bucket, object_name=None):
+    """Upload a file to an S3 bucket
+
+    :param file_path: File to upload
+    :param bucket: Bucket to upload to
+    :param object_name: S3 object name. If not specified, file_path is used
+    :return: True if file was uploaded, else False
+    """
+    # If S3 object_name was not specified, use file_path
+    if object_name is None:
+        object_name = os.path.basename(file_path)
+
+    # Add prefix if specified
+    if S3_PREFIX:
+        object_name = f"{S3_PREFIX}{object_name}"
+
+    # Upload the file
+    try:
+        s3_client = boto3.client('s3', region_name=AWS_REGION)
+        s3_client.upload_file(file_path, bucket, object_name)
+        logging.info(f"Successfully uploaded {file_path} to s3://{bucket}/{object_name}")
+        return True
+    except ClientError as e:
+        logging.error(f"Error uploading to S3: {str(e)}")
+        return False
 
 def wait_for_prompt(channel, prompt, timeout=30):
     """Wait for a specific prompt with timeout"""
@@ -59,6 +111,10 @@ def wait_for_prompt(channel, prompt, timeout=30):
 
 def main():
     logging.info("Starting ISE export process")
+    
+    # Check AWS credentials before proceeding
+    if not check_aws_credentials():
+        sys.exit(1)
     
     try:
         # Create SSH client
@@ -115,11 +171,10 @@ def main():
         ssh.close()
         logging.info("SSH connection closed")
         
-        # 3. Upload the file to S3 using curl
+        # 3. Upload the file to S3 using boto3
         logging.info("Uploading file to S3 bucket")
         if os.path.exists(f"{NFS_PATH}/{CSV_FILE}"):
-            upload_cmd = f'curl -X PUT -T "{NFS_PATH}/{CSV_FILE}" "{PRESIGNED_URL}"'
-            if os.system(upload_cmd) != 0:
+            if not upload_to_s3(f"{NFS_PATH}/{CSV_FILE}", S3_BUCKET):
                 logging.error("Failed to upload file to S3")
                 sys.exit(1)
         else:
