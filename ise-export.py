@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Usage: ./ise-export.py
+Usage: ./ise-export.py [environment]
 
 The script will:
 1. Connect to ISE server
@@ -9,6 +9,7 @@ The script will:
 4. (Optional) Upload to S3 bucket
 
 Note: This script is designed to run as a cron job.
+Environment can be specified as argument (e.g., prod, staging, dev)
 """
 
 __author__ = "Andre Klyuchka"
@@ -25,6 +26,7 @@ import time
 import boto3
 from botocore.exceptions import ClientError
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Get the directory where the script is located
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -43,18 +45,53 @@ console = logging.StreamHandler()
 console.setLevel(logging.INFO)
 logging.getLogger('').addHandler(console)
 
-# Variables - using environment variables with fallbacks
-ISE_HOST = os.getenv('ISE_HOST', '1.2.3.4')
-ISE_USER = os.getenv('ISE_USER', 'iseadmin')
-ISE_KEY = os.path.expanduser(os.getenv('ISE_KEY', '~/.ssh/ise'))
-NFS_PATH = os.getenv('NFS_PATH', '/home/nfsshare')
-TODAY = datetime.now().strftime("%d-%b-%Y")
-CSV_FILE = f"FullReport_{TODAY}.csv"
+def load_environment(env_name=None):
+    """Load environment variables from .env file
+    
+    Args:
+        env_name (str, optional): Environment name (prod, staging, dev). 
+                                 If None, uses default .env file
+    """
+    if env_name:
+        env_file = SCRIPT_DIR / f'.env.{env_name}'
+    else:
+        env_file = SCRIPT_DIR / '.env'
+    
+    if not env_file.exists():
+        logging.error(f"Environment file not found: {env_file}")
+        sys.exit(1)
+    
+    load_dotenv(env_file)
+    logging.info(f"Loaded environment from {env_file}")
 
-# AWS Configuration - using environment variables with fallbacks
-AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
-S3_BUCKET = os.getenv('S3_BUCKET', 'your-bucket-name')
-S3_PREFIX = os.getenv('S3_PREFIX', 'ise-reports/')
+def get_config():
+    """Get configuration from environment variables with validation"""
+    required_vars = [
+        'ISE_HOST',
+        'ISE_USER',
+        'ISE_KEY',
+        'NFS_PATH',
+        'AWS_REGION',
+        'S3_BUCKET'
+    ]
+    
+    config = {}
+    missing_vars = []
+    
+    for var in required_vars:
+        value = os.getenv(var)
+        if not value:
+            missing_vars.append(var)
+        config[var] = value
+    
+    if missing_vars:
+        logging.error(f"Missing required environment variables: {', '.join(missing_vars)}")
+        sys.exit(1)
+    
+    # Optional variables with defaults
+    config['S3_PREFIX'] = os.getenv('S3_PREFIX', 'ise-reports/')
+    
+    return config
 
 def check_aws_credentials():
     """Check if AWS credentials are properly configured"""
@@ -69,12 +106,13 @@ def check_aws_credentials():
         logging.error(f"Error checking AWS credentials: {str(e)}")
         return False
 
-def upload_to_s3(file_path, bucket, object_name=None):
+def upload_to_s3(file_path, bucket, object_name=None, prefix=None):
     """Upload a file to an S3 bucket
 
     :param file_path: File to upload
     :param bucket: Bucket to upload to
     :param object_name: S3 object name. If not specified, file_path is used
+    :param prefix: Optional prefix for the S3 object
     :return: True if file was uploaded, else False
     """
     # If S3 object_name was not specified, use file_path
@@ -82,12 +120,12 @@ def upload_to_s3(file_path, bucket, object_name=None):
         object_name = os.path.basename(file_path)
 
     # Add prefix if specified
-    if S3_PREFIX:
-        object_name = f"{S3_PREFIX}{object_name}"
+    if prefix:
+        object_name = f"{prefix}{object_name}"
 
     # Upload the file
     try:
-        s3_client = boto3.client('s3', region_name=AWS_REGION)
+        s3_client = boto3.client('s3', region_name=os.getenv('AWS_REGION'))
         s3_client.upload_file(file_path, bucket, object_name)
         logging.info(f"Successfully uploaded {file_path} to s3://{bucket}/{object_name}")
         return True
@@ -110,7 +148,14 @@ def wait_for_prompt(channel, prompt, timeout=30):
     return False
 
 def main():
-    logging.info("Starting ISE export process")
+    # Get environment name from command line argument
+    env_name = sys.argv[1] if len(sys.argv) > 1 else None
+    load_environment(env_name)
+    
+    # Get configuration
+    config = get_config()
+    
+    logging.info(f"Starting ISE export process for environment: {env_name or 'default'}")
     
     # Check AWS credentials before proceeding
     if not check_aws_credentials():
@@ -120,8 +165,12 @@ def main():
         # Create SSH client
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        logging.info(f"Connecting to {ISE_HOST}...")
-        ssh.connect(ISE_HOST, username=ISE_USER, key_filename=ISE_KEY)
+        logging.info(f"Connecting to {config['ISE_HOST']}...")
+        ssh.connect(
+            config['ISE_HOST'],
+            username=config['ISE_USER'],
+            key_filename=os.path.expanduser(config['ISE_KEY'])
+        )
         logging.info("Connected successfully")
         
         # Create interactive shell
@@ -173,12 +222,16 @@ def main():
         
         # 3. Upload the file to S3 using boto3
         logging.info("Uploading file to S3 bucket")
-        if os.path.exists(f"{NFS_PATH}/{CSV_FILE}"):
-            if not upload_to_s3(f"{NFS_PATH}/{CSV_FILE}", S3_BUCKET):
+        if os.path.exists(f"{config['NFS_PATH']}/{CSV_FILE}"):
+            if not upload_to_s3(
+                f"{config['NFS_PATH']}/{CSV_FILE}",
+                config['S3_BUCKET'],
+                prefix=config['S3_PREFIX']
+            ):
                 logging.error("Failed to upload file to S3")
                 sys.exit(1)
         else:
-            logging.error(f"File not found: {NFS_PATH}/{CSV_FILE}")
+            logging.error(f"File not found: {config['NFS_PATH']}/{CSV_FILE}")
             sys.exit(1)
         
         logging.info("ISE export process completed successfully")
