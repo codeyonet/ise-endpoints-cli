@@ -156,6 +156,10 @@ def main():
     # Get configuration
     config = get_config()
     
+    # Define CSV file name
+    TODAY = datetime.now().strftime("%d-%b-%Y")
+    CSV_FILE = f"FullReport_{TODAY}.csv"
+    
     logging.info(f"Starting ISE export process for environment: {env_name or 'default'}")
     
     # Check AWS credentials before proceeding
