@@ -5,14 +5,15 @@ This tool automates the process of exporting endpoint data from Cisco ISE (Ident
 Note: The recommended programmatic way to export all endpoints’ attributes is using [pxGrid](https://github.com/cisco-pxgrid/pxgrid-rest-ws/wiki/Endpoint), which is available starting from ISE 3.3. If you are on a prior ISE version or need to automate the CLI CSV export for some other reason, this tool is suitable for you.
 
 Note 2: I created version 2 of the script `ise-export-v2.py` which has the following improvements:
-	- Switched from hardcoded variables to .env file configuration
-	- Added support for multiple environments (prod/staging/dev) via command-line argument (we will adapt to your cluster names)
-	- Replaced pre-signed URL S3 upload with direct boto3 integration
-	- Added AWS credentials validation before execution
-	- Removed hardcoded ISE hostname and credentials
-	- Added environment-specific .env file support (.env.prod, .env.staging, etc.)
-	- Added proper S3 bucket and region configuration through environment variables
-	- Changed from curl to boto3 for S3 uploads
+
+- Switched from hardcoded variables to .env file configuration
+- Added support for multiple environments (prod/staging/dev) via command-line argument (we will adapt to your cluster names)
+- Replaced pre-signed URL S3 upload with direct boto3 integration
+- Added AWS credentials validation before execution
+- Removed hardcoded ISE hostname and credentials
+- Added environment-specific .env file support (.env.prod, .env.staging, etc.)
+- Added proper S3 bucket and region configuration through environment variables
+- Changed from curl to boto3 for S3 uploads
 
 I keep the original version `ise-export.py` untouched for anyone who needs quick and simple way to automate the export. I did not have time to update the readme for V2, yet. Hope you can figure it out :)
 
