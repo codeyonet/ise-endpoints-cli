@@ -166,20 +166,49 @@ def main():
         # Create SSH client
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        logging.info(f"Connecting to {config['ISE_HOST']}...")
-        ssh.connect(
-            config['ISE_HOST'],
-            username=config['ISE_USER'],
-            key_filename=os.path.expanduser(config['ISE_KEY'])
-        )
+        
+        # Try to use SSH agent first
+        agent = paramiko.Agent()
+        if agent.get_keys():
+            logging.info("Using SSH agent for authentication")
+            ssh.connect(
+                config['ISE_HOST'],
+                username=config['ISE_USER'],
+                sock=agent.get_socket()
+            )
+        else:
+            # Fall back to key file if agent is not available
+            logging.info("SSH agent not available, using key file")
+            key_path = os.path.expanduser(config['ISE_KEY'])
+            if not os.path.exists(key_path):
+                logging.error(f"SSH key file not found: {key_path}")
+                sys.exit(1)
+            
+            # Try to load the key
+            try:
+                key = paramiko.RSAKey.from_private_key_file(key_path)
+                ssh.connect(
+                    config['ISE_HOST'],
+                    username=config['ISE_USER'],
+                    pkey=key
+                )
+            except paramiko.PasswordRequiredException:
+                logging.error("SSH key is encrypted. Please either:")
+                logging.error("1. Use an unencrypted key (less secure)")
+                logging.error("2. Add the key to SSH agent before running the script:")
+                logging.error("   eval $(ssh-agent -s)")
+                logging.error("   ssh-add /path/to/your/key")
+                sys.exit(1)
+        
         logging.info("Connected successfully")
         
         # Create interactive shell
         channel = ssh.invoke_shell()
         logging.info("Interactive shell created")
         
-        # Wait for initial prompt
-        if not wait_for_prompt(channel, "ise-ppan-cx/admin#"):
+        # Wait for initial prompt - using ISE_USER variable
+        admin_prompt = f"/{config['ISE_USER']}#"
+        if not wait_for_prompt(channel, admin_prompt):
             logging.error("Timeout waiting for initial prompt")
             sys.exit(1)
         
@@ -205,14 +234,14 @@ def main():
         
         # Exit menu
         channel.send("0\n")
-        if not wait_for_prompt(channel, "ise-ppan-cx/admin#"):
+        if not wait_for_prompt(channel, admin_prompt):
             logging.error("Timeout waiting for admin prompt")
             sys.exit(1)
         
         # 2. Copy the file from ISE to NFS repository
         logging.info("Copying file from ISE to NFS repository")
         channel.send(f"copy disk:/{CSV_FILE} repository NFS\n")
-        if not wait_for_prompt(channel, "ise-ppan-cx/admin#"):
+        if not wait_for_prompt(channel, admin_prompt):
             logging.error("Timeout waiting for copy completion")
             sys.exit(1)
         
