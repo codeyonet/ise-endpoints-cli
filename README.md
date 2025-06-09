@@ -7,7 +7,7 @@ Note: The recommended programmatic way to export all endpoints’ attributes is 
 Note 2: I created version 2 of the script `ise-export-v2.py` which has the following improvements:
 
 - Switched from hardcoded variables to .env file configuration
-- Added support for multiple environments (prod/staging/dev) via command-line argument (we will adapt to your cluster names)
+- Added support for multiple environments (prod/staging/dev) via command-line argument
 - Replaced pre-signed URL S3 upload with direct boto3 integration
 - Added AWS credentials validation before execution
 - Removed hardcoded ISE hostname and credentials
