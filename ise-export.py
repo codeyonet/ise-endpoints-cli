@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Usage: ./ise-export-test.py
+Usage: ./ise-export.py
 
 This is a test script to verify the ISE export process. 
 It uses a pre-signed URL to upload the file to S3, and really not suitable to work as a cron job.
